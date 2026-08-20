@@ -1,8 +1,10 @@
 const body = document.body;
 const nav = document.querySelector(".nav");
+const mobileNav = document.querySelector(".mobile-nav");
+const mobileNavBackdrop = document.querySelector(".mobile-nav-backdrop");
 const mobileToggle = document.querySelector(".mobile-toggle");
 const closeButton = document.querySelector(".close-button");
-const navLinks = [...document.querySelectorAll(".nav__link")];
+const navLinks = [...document.querySelectorAll(".nav__link, .mobile-nav__link")];
 const toast = document.querySelector(".toast");
 const sections = [...document.querySelectorAll("main > section[id]")];
 let toastTimer;
@@ -16,7 +18,7 @@ const lenis = typeof window.Lenis === "function"
       lerp: 0.085,
       wheelMultiplier: 0.9,
       stopInertiaOnNavigate: true,
-      respectReducedMotion: true,
+      respectReducedMotion: false,
       prevent: (node) => node instanceof HTMLElement && Boolean(node.closest("dialog[open]")),
     })
   : null;
@@ -27,6 +29,8 @@ function setMenu(open) {
   body.classList.toggle("menu-open", open);
   mobileToggle.setAttribute("aria-expanded", String(open));
   mobileToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+  mobileNav?.setAttribute("aria-hidden", String(!open));
+  if (mobileNav) mobileNav.inert = !open;
 }
 
 function showToast(message) {
@@ -36,7 +40,35 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2200);
 }
 
+let navScrollFrame;
+
+function animateNavScroll(target) {
+  cancelAnimationFrame(navScrollFrame);
+
+  const startY = window.scrollY;
+  const targetY = startY + target.getBoundingClientRect().top;
+  const distance = targetY - startY;
+  const duration = 1400;
+  const startTime = performance.now();
+
+  function updateScroll(currentTime) {
+    const progress = Math.min((currentTime - startTime) / duration, 1);
+    const easedProgress = 1 - Math.pow(1 - progress, 4);
+    const nextY = startY + distance * easedProgress;
+
+    document.documentElement.scrollTop = nextY;
+    document.body.scrollTop = nextY;
+
+    if (progress < 1) {
+      navScrollFrame = requestAnimationFrame(updateScroll);
+    }
+  }
+
+  navScrollFrame = requestAnimationFrame(updateScroll);
+}
+
 mobileToggle.addEventListener("click", () => setMenu(!body.classList.contains("menu-open")));
+mobileNavBackdrop?.addEventListener("click", () => setMenu(false));
 
 closeButton.addEventListener("click", () => {
   if (window.innerWidth <= 900) {
@@ -49,12 +81,42 @@ closeButton.addEventListener("click", () => {
 });
 
 navLinks.forEach((link) => {
-  link.addEventListener("click", () => setMenu(false));
+  link.addEventListener("click", (event) => {
+    setMenu(false);
+
+    const targetId = link.getAttribute("href");
+    const target = targetId?.startsWith("#")
+      ? document.getElementById(targetId.slice(1))
+      : null;
+
+    if (!target) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (lenis) {
+      lenis.start();
+      lenis.scrollTo(target, {
+        force: true,
+        lerp: 0.05,
+      });
+    } else {
+      animateNavScroll(target);
+    }
+
+    if (window.location.hash !== targetId) {
+      window.history.pushState(null, "", targetId);
+    }
+  });
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") setMenu(false);
 });
+
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 900 && body.classList.contains("menu-open")) setMenu(false);
+}, { passive: true });
 
 const sectionObserver = new IntersectionObserver(
   (entries) => {
@@ -620,25 +682,39 @@ faqCategoryButtons.forEach((button, index) => {
   });
 });
 
-const journeySubscribe = document.querySelector(".journey-subscribe");
-const journeyEmail = journeySubscribe?.querySelector('input[type="email"]');
+const journeyContactForm = document.querySelector(".journey-contact-form");
+const journeyFields = [...(journeyContactForm?.querySelectorAll("input, textarea") ?? [])];
 
-journeySubscribe?.addEventListener("submit", (event) => {
+journeyContactForm?.addEventListener("submit", (event) => {
   event.preventDefault();
 
-  if (!journeyEmail?.checkValidity()) {
-    journeyEmail?.setAttribute("aria-invalid", "true");
-    journeyEmail?.focus();
-    showToast("Please enter a valid email address.");
+  const invalidField = journeyFields.find((field) => !field.checkValidity());
+
+  journeyFields.forEach((field) => {
+    field.toggleAttribute("aria-invalid", !field.checkValidity());
+  });
+
+  if (invalidField) {
+    invalidField.focus();
+    showToast("Please complete the contact form.");
     return;
   }
 
-  journeyEmail.removeAttribute("aria-invalid");
-  journeySubscribe.reset();
-  showToast("Thank you — property updates are on the way.");
+  const formData = new FormData(journeyContactForm);
+  const name = String(formData.get("name") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim();
+  const requirements = String(formData.get("requirements") ?? "").trim();
+  const subject = `Property enquiry from ${name}`;
+  const message = `Name: ${name}\nEmail: ${email}\n\nWhat I'm looking for:\n${requirements}`;
+  const mailto = `mailto:contact@luxirarestate.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
+
+  showToast("Opening your email app…");
+  window.location.href = mailto;
 });
 
-journeyEmail?.addEventListener("input", () => journeyEmail.removeAttribute("aria-invalid"));
+journeyFields.forEach((field) => {
+  field.addEventListener("input", () => field.removeAttribute("aria-invalid"));
+});
 
 document.querySelectorAll("[data-legal-dialog]").forEach((button) => {
   button.addEventListener("click", () => {
